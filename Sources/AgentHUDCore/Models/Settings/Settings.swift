@@ -118,6 +118,11 @@ public struct Settings: Hashable, Codable, Sendable {
     /// `ScreenPlacement.default(hasNotch:)` for its hardware, so a newly attached display needs no setup.
     public var screens: [String: ScreenPlacement] = [:]
 
+    /// Manual ordering of provider groups in Settings → Agents, applied to every group including those
+    /// without quota windows. Providers absent from the list keep their discovery order after the ordered
+    /// ones. Entries that no longer exist are ignored.
+    public private(set) var providerOrder: [String] = []
+
     /// This screen's placement, or the default its hardware deserves. The companion to `glow(on:)`: both
     /// resolve "what this display uses" in one place, so a caller cannot invent its own fallback.
     public func placement(on screen: String, hasNotch: Bool) -> ScreenPlacement {
@@ -132,7 +137,7 @@ public struct Settings: Hashable, Codable, Sendable {
         case requiresOptionToOpen, openImmediatelyAtTop, hoverDelayMs, collapseDelayMs, showResetCountdown
         case showIslandQuota, showIslandTokens, showIslandSessions, botLogos, hiddenAccountIDs
         case liveStatusPreferences, disabledLiveStatusSources, readCopilotQuota, clientHooks, approvalWaitMinutes
-        case launchAtLogin, showMenuBarIcon, appearance, language, screens, screenGlow
+        case launchAtLogin, showMenuBarIcon, appearance, language, screens, screenGlow, providerOrder
     }
 
     public init(from decoder: Decoder) throws {
@@ -188,6 +193,7 @@ public struct Settings: Hashable, Codable, Sendable {
         language = try c.decodeIfPresent(AppLanguage.self, forKey: .language) ?? d.language
         screens = (try? c.decodeIfPresent([String: ScreenPlacement].self, forKey: .screens)) ?? d.screens
         screenGlow = (try? c.decodeIfPresent([String: GlowSettings].self, forKey: .screenGlow)) ?? d.screenGlow
+        providerOrder = (try? c.decodeIfPresent([String].self, forKey: .providerOrder)) ?? d.providerOrder
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -225,6 +231,7 @@ public struct Settings: Hashable, Codable, Sendable {
         try c.encode(language, forKey: .language)
         try c.encode(screens, forKey: .screens)
         try c.encode(screenGlow, forKey: .screenGlow)
+        try c.encode(providerOrder, forKey: .providerOrder)
     }
 
     private static func clampGlowSize(_ value: Double) -> Double {
@@ -254,6 +261,18 @@ public struct Settings: Hashable, Codable, Sendable {
     public mutating func setAccountVisibility(id: String, visible: Bool) {
         if visible { hiddenAccountIDs.remove(id) }
         else { hiddenAccountIDs.insert(id) }
+    }
+
+    /// Records a manual swap of two provider groups. Both must already appear in the list the settings page
+    /// shows, so `providerOrder` stays a permutation of known providers rather than a growing stash.
+    public mutating func moveProvider(id: String, to targetID: String, known: [String]) {
+        var order = providerOrder.filter { known.contains($0) }
+        for provider in known where !order.contains(provider) { order.append(provider) }
+        guard let source = order.firstIndex(where: { $0 == id }),
+              let target = order.firstIndex(where: { $0 == targetID }) else { return }
+        let moved = order.remove(at: source)
+        order.insert(moved, at: target)
+        providerOrder = order
     }
 
     public func liveStatusEnabled(for vendor: String) -> Bool {

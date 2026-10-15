@@ -38,6 +38,10 @@ actor AdditionalLocalStore {
         }
         let notices = ([failed ? ProviderFailure.local.message : nil, mergeNotice] + pass.files.map(\.parsed.notice)).compactMap { $0 }
         return ProviderSessions(sessions: byID.keys.sorted().compactMap { byID[$0] }, notice: notices.isEmpty ? nil : Array(Set(notices)).sorted().joined(separator: " · "),
-            indexing: pass.indexing, revision: pass.revision, files: pass.listedFiles { $0.sessions.map(\.id) })
+            indexing: pass.indexing, revision: pass.revision, files: pass.listedFiles { $0.sessions.map(\.id) },
+            // Sessions the layout merged across files keep every file's models for them.
+            models: pass.files.reduce(into: [:]) { $0.merge($1.parsed.models) { $0.union($1) } },
+            apiReached: pass.files.reduce(into: Set<String>()) { $0.formUnion($1.parsed.apiReached) },
+            limitHits: pass.files.flatMap(\.parsed.limitHits))
     }
 }

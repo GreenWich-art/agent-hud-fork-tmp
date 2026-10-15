@@ -106,6 +106,17 @@ public final class SettingsStore {
         updateAgents { $0.movingGroup(id: id, to: targetID) }
     }
 
+    /// Swaps two provider groups of the settings page by their recorded order, covering groups without
+    /// quota windows. Quota rows themselves keep their order inside `agents`.
+    public func moveProviderGroup(id: String, to targetID: String, known: [String]) {
+        guard id != targetID else { return }
+        let next = settings.with { $0.moveProvider(id: id, to: targetID, known: known) }
+        guard next != settings else { return }
+        settings = next
+        persist(next, key: Keys.settings)
+        onChange?(.settings)
+    }
+
     /// Adds rows a provider discovered (in the order given) and refreshes the names and flags of known rows.
     /// New rows for a vendor go right after that vendor's last existing row; vendors new to the list go to the top in
     /// the order the providers gave them, switched off when the vendor catalog starts them hidden. The user's manual
@@ -194,9 +205,12 @@ public final class SettingsStore {
                     let existing = list[index]
                     if existing.model != found.model || existing.shortModel != found.shortModel || existing.source != found.source
                         || existing.connected != found.connected || existing.billingPool != found.billingPool
-                        || existing.account != found.account || existing.allModels != found.allModels {
+                        || existing.account != found.account || existing.allModels != found.allModels || existing.vendor != found.vendor {
+                        // A same-id row follows its provider's current homing: the display group can move when
+                        // the credential that carries it is read under a different group (a plan a Tencent
+                        // client alone carries shows inside that client's group).
                         list[index] = AgentDescriptor(
-                            id: existing.id, vendor: existing.vendor, model: found.model, shortModel: found.shortModel, source: found.source,
+                            id: existing.id, vendor: found.vendor, model: found.model, shortModel: found.shortModel, source: found.source,
                             enabled: existing.enabled, connected: found.connected, billingPool: found.billingPool, account: found.account,
                             allModels: found.allModels
                         )

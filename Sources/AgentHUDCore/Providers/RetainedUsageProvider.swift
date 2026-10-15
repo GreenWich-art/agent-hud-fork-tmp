@@ -62,7 +62,8 @@ extension UsageReport {
                     quotaNotices: quotaNotices, readingIssues: readingIssues, consumerIdsByQuota: consumerIdsByQuota, billing: billing,
                     codexResetCredits: codexResetCredits,
                     codexResetCreditsObservedAt: codexResetCreditsObservedAt, services: services, activeQuotaPoolIDs: activeQuotaPoolIDs,
-                    accounts: accounts, forgottenAccountProviders: forgottenAccountProviders, periods: periods,
+                    accounts: accounts, forgottenAccountProviders: forgottenAccountProviders,
+                    sessionCredits: sessionCredits, periods: periods,
                     rowSeenAt: rowSeenAt)
     }
 
@@ -74,7 +75,9 @@ extension UsageReport {
                     readingIssues: readingIssues, consumerIdsByQuota: consumerIdsByQuota, billing: billing, codexResetCredits: codexResetCredits,
                     codexResetCreditsObservedAt: codexResetCreditsObservedAt, completions: completions, turns: turns,
                     services: services, activeQuotaPoolIDs: activeQuotaPoolIDs, accounts: accounts,
-                    forgottenAccountProviders: forgottenAccountProviders, sessionUsage: sessionUsage, periods: periods,
+                    forgottenAccountProviders: forgottenAccountProviders, sessionUsage: sessionUsage,
+                    sessionCredits: sessionCredits,
+                    periods: periods,
                     rowSeenAt: Dictionary(discoveredAgents.map { ($0.id, generatedAt) }, uniquingKeysWith: { first, _ in first }))
     }
 
@@ -160,6 +163,7 @@ extension UsageReport {
             activeQuotaPoolIDs: (previous.activeQuotaPoolIDs ?? [:]).merging(activeQuotaPoolIDs ?? [:], uniquingKeysWith: { _, new in new }),
             accounts: accounts,
             sessionUsage: Self.retainedSessionUsage(sessionUsage, previous: previous.sessionUsage, sessions: retainedSessions),
+            sessionCredits: Self.retainedSessionCredits(sessionCredits, previous: previous.sessionCredits),
             // Like `usage`, the periods come from the ledger, which keeps what a failed refresh recorded before.
             periods: periods,
             rowSeenAt: Dictionary(rows.map { ($0.id, seen[$0.id] ?? generatedAt) }, uniquingKeysWith: { first, _ in first }))
@@ -172,6 +176,13 @@ extension UsageReport {
         var merged = current ?? [:]
         for session in sessions where merged[session.id] == nil { merged[session.id] = previous[session.id] }
         return merged
+    }
+
+    /// Credits the metering recorded keep standing when this pass's read failed; a fresh read replaces them entirely.
+    private static func retainedSessionCredits(_ current: [String: SessionCredits]?, previous: [String: SessionCredits]?) -> [String: SessionCredits]? {
+        guard let previous else { return current }
+        guard let current else { return previous }
+        return current.isEmpty ? previous : current
     }
 
     /// A provider's reported list replaces its accounts. A client home whose identity read failed keeps its last current

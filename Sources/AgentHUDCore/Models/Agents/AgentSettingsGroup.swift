@@ -64,12 +64,20 @@ public struct AgentSettingsGroup: Identifiable, Equatable, Sendable {
     /// One group per account provider, including sources not detected on this Mac, plus present rows and
     /// reported services. Undetected sources follow other groups, preserving order within both sections. A source alone
     /// creates no windows or accounts; existing windows keep their manual order.
-    public static func make(sources: [SourceStatus], agents: [AgentDescriptor], report: UsageReport? = nil) -> [Self] {
+    public static func make(sources: [SourceStatus], agents: [AgentDescriptor], report: UsageReport? = nil, providerOrder: [String] = []) -> [Self] {
         let agents = agents.filter { ReportView.isPresent($0, in: report) }
         let existing = agents.agentGroups
         var ids = existing.map(\.id)
         for id in sources.map(\.provider) + agents.map(\.vendor) + (report?.services ?? []).map(\.client)
             where !ids.contains(id) { ids.append(id) }
+        // A manual order covers every group, including those without quota windows; unknown entries and
+        // newcomers without one keep their discovery order after the ordered groups.
+        if !providerOrder.isEmpty {
+            let known = Set(ids)
+            let ordered = providerOrder.filter { known.contains($0) }
+            let rest = ids.filter { !ordered.contains($0) }
+            ids = ordered + rest
+        }
         let groups = ids.map { id in
             let family = sources.filter { $0.provider == id }
             let source = family.first { $0.state != .notDetected } ?? family.first

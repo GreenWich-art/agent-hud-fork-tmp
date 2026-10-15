@@ -93,6 +93,9 @@ public struct UsageReport: Hashable, Codable, Sendable {
     public let codexResetCreditsObservedAt: Date?
     /// Where each session's tokens went, by session id. Optional so previously saved reports remain readable.
     public let sessionUsage: [String: SessionUsage]?
+    /// WorkBuddy's own metering of each session: credits, their attribution, and its context size; other sources meter
+    /// nothing of their own.
+    public let sessionCredits: [String: SessionCredits]?
     /// Every model's tokens today and over the last seven and thirty days; `usage` covers only the charts' week.
     public let periods: UsagePeriods?
     /// When a provider last reported each row of `discoveredAgents`, in reports kept across passes; a single read and the
@@ -124,10 +127,12 @@ public struct UsageReport: Hashable, Codable, Sendable {
         accounts: [String: [AccountObservation]]? = nil,
         forgottenAccountProviders: Set<String>? = nil,
         sessionUsage: [String: SessionUsage]? = nil,
+        sessionCredits: [String: SessionCredits]? = nil,
         periods: UsagePeriods? = nil,
         rowSeenAt: [String: Date]? = nil
     ) {
         self.sessionUsage = sessionUsage
+        self.sessionCredits = sessionCredits
         self.periods = periods
         self.rowSeenAt = rowSeenAt
         self.accounts = accounts

@@ -156,6 +156,18 @@ enum OpenAgentCredentials {
                 if value.isUsable(at: now) { found.append(value) }
             }
         }
+        // WorkBuddy keeps model entries in ~/.workbuddy/models.json; a GLM Coding Plan entry whose URL is
+        // Zhipu's own coding endpoint carries the plan's key. Only those endpoints are read, mirroring the
+        // restriction the same function applies to every other client's stored credentials.
+        let workBuddyModels = read(home.appendingPathComponent(".workbuddy/models.json"))
+        for entry in workBuddyModels.arrayValue ?? [] {
+            guard entry["vendor"].stringValue == "GLM Coding Plan",
+                  let key = entry["apiKey"].stringValue, !key.isEmpty,
+                  let service = service(provider: "", baseURL: entry["url"].stringValue) else { continue }
+            if found.contains(where: { $0.service == service && $0.token == key }) { continue }
+            let credential = credential(service, token: key, client: "WorkBuddy")
+            if credential.isUsable(at: now) { found.append(credential) }
+        }
         return merge(found)
     }
     static func kimiStorageName(_ service: OpenAgentCredential.Service) -> String {

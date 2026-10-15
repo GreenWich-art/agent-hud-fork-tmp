@@ -49,10 +49,16 @@ struct ReorderDropDelegate: DropDelegate {
     let target: AgentOrderDrag
     @Binding var dragging: AgentOrderDrag?
     let settings: SettingsStore
+    /// Every group id the settings page lists. A group without quota windows is draggable too, so the
+    /// check cannot rely on `settings.agents` containing rows for both ends of a move.
+    var knownGroups: Set<String> = []
 
     func validateDrop(info: DropInfo) -> Bool {
         switch (dragging, target) {
         case let (.group(sourceID), .group(targetID)):
+            if !knownGroups.isEmpty {
+                return sourceID != targetID && knownGroups.contains(sourceID) && knownGroups.contains(targetID)
+            }
             return settings.agents.contains { $0.displayVendor == sourceID }
                 && settings.agents.contains { $0.displayVendor == targetID }
         case let (.model(sourceID), .model(targetID)):
@@ -68,7 +74,11 @@ struct ReorderDropDelegate: DropDelegate {
         withAnimation(.easeOut(duration: 0.18)) {
             switch (dragging, target) {
             case let (.group(sourceID), .group(targetID)):
-                settings.moveAgentGroup(id: sourceID, to: targetID)
+                if knownGroups.isEmpty {
+                    settings.moveAgentGroup(id: sourceID, to: targetID)
+                } else {
+                    settings.moveProviderGroup(id: sourceID, to: targetID, known: Array(knownGroups))
+                }
             case let (.model(sourceID), .model(targetID)):
                 settings.moveAccountWindow(id: sourceID, to: targetID)
             default: break

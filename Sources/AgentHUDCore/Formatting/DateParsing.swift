@@ -36,6 +36,43 @@ public enum DateParsing {
         text.flatMap(Formatters.shared.day)
     }
 
+    /// A wall-clock time without a zone, such as the reset time in a 429 message (`2026-10-14 01:06:03`), read in the
+    /// zone this Mac runs in: the client that logged it logs in the same zone. Only that fixed shape parses.
+    static func localWallClock(_ text: String) -> Date? {
+        let bytes = Array(text.utf8)
+        guard bytes.count == 19,
+              let year = fourDigits(bytes, 0), bytes[4] == UInt8(ascii: "-"),
+              let month = twoDigits(bytes, 5), bytes[7] == UInt8(ascii: "-"),
+              let day = twoDigits(bytes, 8), bytes[10] == UInt8(ascii: " "),
+              let hour = twoDigits(bytes, 11), bytes[13] == UInt8(ascii: ":"),
+              let minute = twoDigits(bytes, 14), bytes[16] == UInt8(ascii: ":"),
+              let second = twoDigits(bytes, 17)
+        else { return nil }
+        guard (1...12).contains(month), (1...31).contains(day), hour < 24, minute < 60, second < 60 else { return nil }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        let components = DateComponents(year: year, month: month, day: day, hour: hour, minute: minute, second: second)
+        return calendar.date(from: components)
+    }
+
+    private static func twoDigits(_ bytes: [UInt8], _ start: Int) -> Int? {
+        guard start + 1 < bytes.count else { return nil }
+        let values = (bytes[start], bytes[start + 1])
+        guard values.0 >= 48, values.0 <= 57, values.1 >= 48, values.1 <= 57 else { return nil }
+        return Int(values.0 - 48) * 10 + Int(values.1 - 48)
+    }
+
+    private static func fourDigits(_ bytes: [UInt8], _ start: Int) -> Int? {
+        guard start + 3 < bytes.count else { return nil }
+        var value = 0
+        for offset in 0..<4 {
+            let byte = bytes[start + offset]
+            guard byte >= 48, byte <= 57 else { return nil }
+            value = value * 10 + Int(byte - 48)
+        }
+        return value
+    }
+
     /// Formatters are not Sendable, so every reader shares these under a lock.
     private final class Formatters: @unchecked Sendable {
         static let shared = Formatters()

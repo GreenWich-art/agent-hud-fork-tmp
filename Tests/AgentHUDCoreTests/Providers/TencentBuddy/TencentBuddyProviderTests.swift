@@ -153,4 +153,85 @@ final class TencentBuddyProviderTests: XCTestCase, @unchecked Sendable {
         payload["hook_event_name"] = "Stop"; payload["session_id"] = ""
         XCTAssertNil(try completion())
     }
+
+    /// A 429 answer names the ceiling it hit and its reset; the failed call records no model, so the session's latest
+    /// successful one is the model it interrupted.
+    private func limitLine(status: String? = "incomplete", error: String, ms: Int = 1788800003000) -> String {
+        #"""
+        {"id":"e1","timestamp":\#(ms),"type":"message","role":"assistant","status":"\#(status ?? "")","sessionId":"s1","cwd":"/Users/alice/repo","providerData":{"error":{"message":"\#(error)","status":429}}}
+        """#
+    }
+
+    func testLimitHitsReportTheResetAndAttributeTheLatestSuccessfulModel() throws {
+        let url = try directory().appendingPathComponent("projects/repo/s1.jsonl")
+        // The reset in the vendor's message is a wall-clock time in the client's own zone, wherever the test runs.
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = .current
+        let reset = try XCTUnwrap(calendar.date(from: DateComponents(year: 2106, month: 2, day: 7, hour: 6, minute: 28, second: 16)))
+        try write([
+            line("message", message: "m1", usage: #"{"inputTokens":100,"outputTokens":4,"totalTokens":104}"#),
+            limitLine(error: "429 已达到 5 小时的使用上限。您的限额将在 2106-02-07 06:28:16 重置。 (a/b)")
+        ], to: url)
+        var result = try TencentBuddySessions.read(url, source: .workbuddy)
+        var hit = try XCTUnwrap(result.limitHits.first, "the 429 line reports the ceiling it hit")
+        XCTAssertEqual(hit.model, "glm-5.3")
+        XCTAssertEqual(hit.window, "5h")
+        XCTAssertEqual(hit.reset, reset)
+        XCTAssertEqual(hit.observedAt, Date(timeIntervalSince1970: 1788800003))
+
+        // A 429 with no success before it names no model; other statuses and shapes never match.
+        try write([limitLine(error: "429 已达到 5 小时的使用上限。您的限额将在 2106-02-07 06:28:16 重置。")], to: url)
+        result = try TencentBuddySessions.read(url, source: .workbuddy)
+        XCTAssertTrue(result.limitHits.isEmpty, "a 429 before any successful call attributes to nothing")
+
+        try write([
+            line("message", message: "m1", usage: #"{"inputTokens":100,"outputTokens":4,"totalTokens":104}"#),
+            limitLine(status: nil, error: "429 已达到 5 小时的使用上限。您的限额将在 2106-02-07 06:28:16 重置。"),
+            limitLine(error: "429 已达到 5 小时的使用上限。您的限额将在 ... 重置。")
+        ], to: url)
+        result = try TencentBuddySessions.read(url, source: .workbuddy)
+        XCTAssertTrue(result.limitHits.isEmpty, "a completed line is a usage record, and a missing reset time never matches")
+
+        try write([
+            line("message", message: "m1", usage: #"{"inputTokens":100,"outputTokens":4,"totalTokens":104}"#),
+            limitLine(error: "429 已达到每周使用上限。您的限额将在 2106-02-07 06:28:16 重置。")
+        ], to: url)
+        hit = try XCTUnwrap(try TencentBuddySessions.read(url, source: .workbuddy).limitHits.first)
+        XCTAssertEqual(hit.window, "week")
+    }
+
+    func testProviderQuotaAddsLimitWindowsWhileTheirResetsAreAhead() async throws {
+        let home = try directory()
+        try write([
+            line("message", message: "m1", usage: #"{"inputTokens":100,"outputTokens":4,"totalTokens":104}"#)
+                .replacingOccurrences(of: #""model":"glm-5.3""#, with: #""model":"Intern-S2","requestModelId":"custom-local:intern-s2""#),
+            limitLine(error: "429 已达到 5 小时的使用上限。您的限额将在 \(wallClock(now.addingTimeInterval(7200))) 重置。")
+        ], to: home.appendingPathComponent(".workbuddy/projects/repo/s1.jsonl"))
+        func makeProvider(clock: @escaping @Sendable () -> Date) -> AdditionalUsageProvider {
+            AdditionalUsageProvider(source: .workbuddy, readQuota: { ProviderQuota() },
+                readSessions: { [home] since in
+                    await AdditionalLocalStore(source: .workbuddy, roots: [home.appendingPathComponent(".workbuddy/projects")]).index(since: since)
+                },
+                history: QuotaHistoryStore(ledger: .inMemory()), clock: clock)
+        }
+        let report = try await makeProvider(clock: { self.now }).fetchUsage(agents: [], historyHours: 24)
+        let window = try XCTUnwrap(report.discoveredAgents.first { $0.id.contains("limit:") })
+        XCTAssertEqual(window.model, "Intern-S2 · " + L10n.text("5 小时使用上限", "5-hour usage limit"))
+        let snapshot = try XCTUnwrap(report.snapshots.first { $0.agentId == window.id })
+        XCTAssertEqual(snapshot.remainingPct, 0)
+        XCTAssertEqual(snapshot.resetAt, now.addingTimeInterval(7200))
+        let inventory = try XCTUnwrap(report.accounts?["WorkBuddy"]?.first?.quotaWindowIDs)
+        XCTAssertTrue(inventory.contains(window.id), "the ceiling rows are listed as the account's complete inventory")
+        let links = report.consumerIdsByQuota[window.id] ?? []
+        XCTAssertTrue(links.contains { $0.hasSuffix("Intern-S2") }, "the ceiling row links to the model it interrupted")
+
+        // Once the reset has passed, the transcripts no longer hold the ceiling and its row retires.
+        let later = try await makeProvider(clock: { self.now.addingTimeInterval(4 * 3600) }).fetchUsage(agents: [], historyHours: 24)
+        XCTAssertTrue(later.discoveredAgents.filter { $0.id.contains("limit:") }.isEmpty)
+    }
+
+    /// The wall-clock reset time the fixture writes, one the test's `now` also reads in the Mac's own zone.
+    private func wallClock(_ date: Date) -> String {
+        let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
+        return String(format: "%04d-%02d-%02d %02d:%02d:%02d", components.year!, components.month!, components.day!, components.hour!, components.minute!, components.second!)
+    }
 }

@@ -26,6 +26,9 @@ public extension UsageStore {
 
     func sessionUsage(_ session: LiveSession) -> SessionUsage? { report?.sessionUsage?[session.id] }
 
+    /// What WorkBuddy's own metering charged the session: credits and their attribution to models.
+    func sessionCredits(_ session: LiveSession) -> SessionCredits? { report?.sessionCredits?[session.id] }
+
     /// Reads the focused turn's calls from the ledger, and the tools they asked for from their logs, once per focus.
     func loadFocusedTurnCalls() async {
         guard focusedTurnCalls == nil, let session = focusedSession, let index = focusedTurn,

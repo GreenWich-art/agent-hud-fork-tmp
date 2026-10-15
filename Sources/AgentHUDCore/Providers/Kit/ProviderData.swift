@@ -161,6 +161,25 @@ struct ProviderSessions: Sendable {
     var files: ListedFiles? = nil
     /// Where the reader's history starts, when it starts later than asked.
     var start: Date? = nil
+    /// Each session's models, as its transcripts logged them; the empty map when the reader does not collect them.
+    /// WorkBuddy correlates them with its own per-model credit metering to attribute what it charged.
+    var models: [String: Set<String>] = [:]
+    /// Models whose calls named one of the app's own model entries (`custom-local:` routes): reached over an API the
+    /// user configured, rather than a model the app serves itself. Empty for readers that do not collect it.
+    var apiReached: Set<String> = []
+    /// Usage ceilings a transcript's 429 errors reported: one per session, attributed to its latest successful model.
+    /// The plans behind API-reached models expose no quota endpoint, so their logged reset times are the only reading.
+    var limitHits: [ProviderLimitHit] = []
+}
+
+/// One 429 ceiling a transcript logged: the model it interrupted (the session's latest successful one), the limit
+/// window it names (`ProviderLimitHit.windows`), when the vendor resets it and when the error was logged.
+public struct ProviderLimitHit: Hashable, Sendable {
+    public static let windows = ["5h", "day", "week", "month"]
+    public let model: String
+    public let window: String
+    public let reset: Date
+    public let observedAt: Date
 }
 
 // The existing JSON value representation keeps parsed data Sendable without passing Foundation Any graphs.

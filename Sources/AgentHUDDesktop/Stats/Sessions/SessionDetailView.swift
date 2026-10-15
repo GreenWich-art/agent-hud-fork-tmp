@@ -141,6 +141,14 @@ struct SessionDetailView: View {
             items.append((L10n.text("额度占比", "Quota share"), TokenFormat.percent1(share), L10n.text("占当前窗口", "Of the current window"),
                           L10n.text("本会话用掉的当前额度窗口", "What this session used of the current quota window")))
         }
+        if let credits = store.sessionCredits(session), credits.total > 0 {
+            items.append((L10n.text("积分", "Credits"), credits.text,
+                          credits.unattributed > 0.005
+                              ? L10n.text("未归因 \(SessionCredits.format(credits.unattributed))", "Unattributed \(SessionCredits.format(credits.unattributed))")
+                              : L10n.text("已按模型归因", "Attributed to models"),
+                          L10n.text("WorkBuddy 自身计量记录的会话积分消耗；无法唯一确定模型的积分单独列为未归因",
+                                    "Credits WorkBuddy's own metering charged the session; the part no one model could be pinned on shows as unattributed")))
+        }
         items.append((L10n.text("轮次", "Turns"), usage.flatMap { $0.turnCount > 0 ? $0.turnCount.formatted() : nil } ?? "—",
                       usage.map { L10n.text("\($0.calls) 次调用", $0.calls == 1 ? "1 call" : "\($0.calls.formatted()) calls") } ?? "",
                       L10n.text("每个 prompt 开始一轮", "Each prompt starts a turn")))
@@ -345,6 +353,7 @@ struct SessionDetailView: View {
 
     private func models(_ usage: SessionUsage) -> some View {
         let total = max(1, usage.total.kinds.total)
+        let credits = store.sessionCredits(session)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Text(L10n.text("模型", "Models")).font(.ui(13, .semibold))
@@ -352,6 +361,7 @@ struct SessionDetailView: View {
                 Text(L10n.text("缓存命中", "Cache hits")).frame(width: 60, alignment: .trailing)
                 Text(L10n.text("占比", "Share")).frame(width: 44, alignment: .trailing)
                 Text("Token").frame(width: 60, alignment: .trailing)
+                if credits != nil { Text(L10n.text("积分", "Credits")).frame(width: 60, alignment: .trailing) }
             }
             .font(.ui(10)).foregroundStyle(theme.secondary)
             ForEach(usage.models, id: \.agentId) { model in
@@ -374,9 +384,20 @@ struct SessionDetailView: View {
                     Text(TokenFormat.share(count, of: total)).font(.tabular(11)).foregroundStyle(theme.secondary)
                         .frame(width: 44, alignment: .trailing)
                     Text(TokenFormat.short(count)).font(.tabular(11)).frame(width: 60, alignment: .trailing)
+                    if let credit = credits {
+                        Text(credit.byModel[model.agentId].map { SessionCredits.format($0) } ?? "—")
+                            .font(.tabular(11)).frame(width: 60, alignment: .trailing)
+                            .help(L10n.text("WorkBuddy 计量的该模型积分；未唯一归因到模型的积分不在此列",
+                                            "Credits WorkBuddy's metering pinned on this model; unattributed credits are not here"))
+                    }
                 }
                 .font(.ui(12))
                 .help(TokenKind.allCases.map { "\($0.label) \(model.tokens.kinds[$0].formatted())" }.joined(separator: " · "))
+            }
+            if let credits, credits.unattributed > 0.005 {
+                Text(L10n.text("另有 \(SessionCredits.format(credits.unattributed)) 积分无法唯一归因到某个模型，未列入上表",
+                               "Another \(SessionCredits.format(credits.unattributed)) credits could not be pinned on one model and are not listed"))
+                    .font(.ui(10)).foregroundStyle(theme.secondary)
             }
             if let subagents = usage.subagents {
                 Text(L10n.text("其中子 agent \(TokenFormat.short(subagents.kinds.total))，会话列表的合计同样包含这部分",

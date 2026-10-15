@@ -203,9 +203,18 @@ actor OpenAgentUsageProvider: UsageProvider, LedgerRecording {
         var insights: [String: UsageInsights] = [:]
         var notices = local.notices, plans: [String: String] = [:], links: [String: Set<String>] = [:]
         var accounts: [String: [AccountObservation]] = ["Kimi": [], "GLM": [], "OpenCode Go": []]
+        // The vendor whose group a pool's windows are shown in. A GLM plan only Tencent's clients carry is shown
+        // inside that client's group, matching the descriptors below; every other pool keeps its provider's group.
+        func displayGroup(of credential: OpenAgentCredential) -> String {
+            let tencentClients: Set<String> = ["WorkBuddy", "CodeBuddy"]
+            guard credential.pool.provider == "GLM", !credential.clients.isEmpty,
+                  credential.clients.allSatisfy({ tencentClients.contains($0) }) else { return credential.pool.provider }
+            return credential.clients.contains("WorkBuddy") ? "WorkBuddy" : "CodeBuddy"
+        }
         var services = apiServices()
         for result in quotas {
             let pool = result.credential.pool
+            let shownUnder = displayGroup(of: result.credential)
             if let error = result.notice {
                 // Shown under its vendor. The pool's account holds back the pool's rows; the vendor's other pools were read
                 // on their own.
@@ -214,14 +223,15 @@ actor OpenAgentUsageProvider: UsageProvider, LedgerRecording {
             }
             if result.isActive {
                 services += result.credential.clients.sorted().map {
-                    AgentService(client: $0, provider: pool.provider, product: .plan, accountID: pool.id,
+                    AgentService(client: $0, provider: shownUnder, product: .plan, accountID: pool.id,
                                  region: pool.realm == "CN" ? .china : pool.realm == "International" ? .international : nil)
                 }
             }
             guard let quota = result.quota else {
                 // A reading that failed without a sign-out keeps the account current, at its last reading, with the reason.
                 if result.isActive {
-                    accounts[pool.provider, default: []].append(AccountObservation(account: ProviderAccount(pool: pool), label: pool.label,
+                    accounts[shownUnder, default: []].append(AccountObservation(account: ProviderAccount(pool: pool),
+                        label: shownUnder == pool.provider ? pool.label : "\(pool.provider) · \(pool.label)",
                         plan: result.plan, observedAt: result.readAt ?? result.at, quotaNotice: result.notice,
                         readingIssue: result.notice.map(ReadingIssue.readFailed)))
                 }
@@ -232,15 +242,18 @@ actor OpenAgentUsageProvider: UsageProvider, LedgerRecording {
             }
             if result.isActive {
                 // A reading whose account the service could not confirm is not verified either.
-                // The pool's label names the account, where its windows are named by their periods.
-                accounts[pool.provider, default: []].append(AccountObservation(account: ProviderAccount(pool: pool), label: pool.label,
+                // The pool's label names the account, where its windows are named by their periods. A pool shown
+                // inside another vendor's group names its own provider too, so the plan's brand stays visible.
+                accounts[shownUnder, default: []].append(AccountObservation(account: ProviderAccount(pool: pool),
+                    label: shownUnder == pool.provider ? pool.label : "\(pool.provider) · \(pool.label)",
                     plan: quota.plan, observedAt: result.at, quotaNotice: result.notice, readingIssue: result.notice.map(ReadingIssue.unverified)))
             }
             for window in quota.windows {
                 let snapshot = UsageSnapshot(agentId: window.id, remainingPct: window.remaining, resetAt: window.reset,
                                              windowDuration: window.duration, updatedAt: result.at)
                 snapshots.append(snapshot)
-                descriptors.append(.init(id: window.id, vendor: pool.provider, model: window.label, shortModel: window.shortLabel ?? window.label,
+                descriptors.append(.init(id: window.id, vendor: shownUnder,
+                    model: window.label, shortModel: window.shortLabel ?? window.label,
                     source: result.credential.clients.sorted().joined(separator: ", "), enabled: true, billingPool: pool,
                     account: ProviderAccount(pool: pool), allModels: window.allModels))
                 // Historical records lacking a pool must not inherit the current credential's quota.
